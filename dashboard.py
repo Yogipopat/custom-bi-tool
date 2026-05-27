@@ -110,6 +110,8 @@ st.markdown("""
         border-radius: 8px;
     }
 
+
+
     /* Selectbox & multiselect */
     [data-testid="stSelectbox"] > div,
     [data-testid="stMultiSelect"] > div {
@@ -121,9 +123,17 @@ st.markdown("""
     [data-testid="stSlider"] > div > div > div {
         background-color: #F0A500 !important;
     }
+            
+    /* Search label — bigger */
+    [data-testid="stTextInput"] label p {
+        font-size: 18px !important;
+        font-weight: 700 !important;
+        color: #F0A500 !important;
+    }
+            
     </style>
 """, unsafe_allow_html=True)
-st.title("📊 Custom BI-style Dashboard")
+st.title("Custom BI-style Dashboard")
 
 uploaded_file = st.file_uploader("Upload excel file", type=["xlsx", "xls"])
 
@@ -132,7 +142,7 @@ if uploaded_file:
     sheet_names = xl.sheet_names
 
     if len(sheet_names) > 1:
-        selected_sheet = st.selectbox("📄 Sheet select karo", sheet_names)
+        selected_sheet = st.selectbox("📄 Select preferred sheet", sheet_names)
     else:
         selected_sheet = sheet_names[0]
 
@@ -140,11 +150,31 @@ if uploaded_file:
     st.success(f"✅ File loaded: {df.shape[0]} rows, {df.shape[1]} columns")
 
     num_cols = df.select_dtypes(include='number').columns.tolist()
-    cat_cols = df.select_dtypes(exclude='number').columns.tolist()
+    cat_cols = [col for col in df.select_dtypes(exclude='number').columns
+                if not pd.api.types.is_datetime64_any_dtype(df[col])]
 
     # ── FILTERS ──────────────────────────────────────────
-    st.sidebar.header("🔽 Filters")
+    # ── FILTERS ──────────────────────────────────────────
+    st.sidebar.header(" Filters")
     filtered_df = df.copy()
+
+    # Date range filter
+    date_cols = [col for col in df.columns if pd.api.types.is_datetime64_any_dtype(df[col])]
+    if date_cols:
+        date_col = date_cols[0]
+        min_date = df[date_col].min().date()
+        max_date = df[date_col].max().date()
+        selected_dates = st.sidebar.date_input(
+            "Date Range",
+            value=(min_date, max_date),
+            min_value=min_date,
+            max_value=max_date
+        )
+        if len(selected_dates) == 2:
+            filtered_df = filtered_df[
+                (filtered_df[date_col].dt.date >= selected_dates[0]) &
+                (filtered_df[date_col].dt.date <= selected_dates[1])
+            ]
 
     for col in cat_cols[:3]:
         options = df[col].dropna().unique().tolist()
@@ -213,9 +243,55 @@ if uploaded_file:
             fig2 = px.histogram(filtered_df, x=hist_col, nbins=20, color_discrete_sequence=["#1D9E75"])
             st.plotly_chart(fig2, use_container_width=True)
 
+    # --- Pivot Table ---
+    st.subheader("Pivot Table")
+    pivot_col1, pivot_col2, pivot_col3 = st.columns(3)
+
+    with pivot_col1:
+        pivot_rows = st.selectbox("Rows", cat_cols, key="pivot_rows")
+    with pivot_col2:
+        pivot_cols = st.selectbox("Columns", cat_cols, key="pivot_cols")
+    with pivot_col3:
+        pivot_vals = st.selectbox("Values", num_cols, key="pivot_vals")
+
+    if pivot_rows and pivot_cols and pivot_vals:
+        pivot_table = filtered_df.pivot_table(
+            index=pivot_rows,
+            columns=pivot_cols,
+            values=pivot_vals,
+            aggfunc="sum",
+            fill_value=0,
+            margins=True,
+            margins_name="Total"
+        )
+        pivot_table = pivot_table.round(0).astype(int)
+        st.dataframe(pivot_table, use_container_width=True)
+
+        csv_pivot = pivot_table.to_csv().encode("utf-8")
+        st.download_button(
+            "⬇️ Download Pivot Table",
+            csv_pivot,
+            "pivot_table.csv",
+            "text/csv",
+            key="pivot_download"
+        )
+
+    st.divider()        
+
     # --- Data Table ---
     st.subheader("Data Preview")
-    st.dataframe(filtered_df.head(100), use_container_width=True)
+    search_query = st.text_input("**Search in Table**", placeholder="type to search...")
+    if search_query:
+        mask = filtered_df.astype(str).apply(lambda row: row.str.contains(search_query, case=False, na=False)).any(axis=1)
+        display_df = filtered_df[mask]
+    else:
+        display_df = filtered_df
+    st.caption(f"Showing {len(display_df)} of {len(filtered_df)} rows")
+    display_df_formatted = display_df.copy()
+    for col in display_df_formatted.columns:
+        if pd.api.types.is_datetime64_any_dtype(display_df_formatted[col]):
+            display_df_formatted[col] = display_df_formatted[col].dt.strftime("%d %b %Y")
+    st.dataframe(display_df_formatted.head(100), use_container_width=True)
 
     # --- PDF EXPORT ──────────────────────────────────────
     st.divider()
@@ -224,7 +300,7 @@ if uploaded_file:
     company_name = "Your Company Name"
 
     if st.button("Generate PDF Report"):
-        with st.spinner("PDF ban raha hai..."):
+        with st.spinner("PDF is being created..."):
 
             img1 = io.BytesIO(fig.to_image(format="png", width=800, height=450, scale=2))
             img2 = io.BytesIO(fig2.to_image(format="png", width=800, height=450, scale=2))
