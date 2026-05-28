@@ -198,11 +198,37 @@ if uploaded_file:
     st.sidebar.markdown(f"**Rows after filter: {len(filtered_df)}**")
     # ─────────────────────────────────────────────────────
 
+    # --- KPI Alerts ---
+    st.sidebar.divider()
+    st.sidebar.subheader("🎯 KPI Target")
+    kpi_col = st.sidebar.selectbox("Monitor column", num_cols, key="kpi_col")
+    kpi_condition = st.sidebar.selectbox("Condition", ["Less than", "Greater than"], key="kpi_cond")
+    kpi_target = st.sidebar.number_input("Target value", min_value=0.0, value=10000.0, step=100.0, key="kpi_target")
+
     # --- Metrics ---
     if num_cols:
+        kpi_actual = filtered_df[kpi_col].sum()
+        kpi_met = (kpi_condition == "Greater than" and kpi_actual >= kpi_target) or \
+                  (kpi_condition == "Less than" and kpi_actual < kpi_target)
+
+        if kpi_met:
+            st.success(f"✅ KPI Met — {kpi_col} is {kpi_actual:,.0f} | Target: {kpi_condition} {kpi_target:,.0f}")
+        else:
+            st.error(f"🔴 KPI Alert — {kpi_col} is {kpi_actual:,.0f} | Target: {kpi_condition} {kpi_target:,.0f}")
+
         cols = st.columns(min(4, len(num_cols)))
         for i, col in enumerate(num_cols[:4]):
-            cols[i].metric(col, f"{filtered_df[col].sum():,.0f}", f"Avg: {filtered_df[col].mean():,.1f}")
+            actual = filtered_df[col].sum()
+            if col == kpi_col:
+                delta_color = "normal" if kpi_met else "inverse"
+                cols[i].metric(
+                    col,
+                    f"{actual:,.0f}",
+                    f"Target: {kpi_target:,.0f}",
+                    delta_color=delta_color
+                )
+            else:
+                cols[i].metric(col, f"{actual:,.0f}", f"Avg: {filtered_df[col].mean():,.1f}")
 
     st.divider()
 
@@ -220,6 +246,20 @@ if uploaded_file:
             fig = px.bar(grouped, x=x_axis, y=y_axis, color=y_axis, color_continuous_scale="Blues")
         elif chart_type == "Line":
             fig = px.line(grouped, x=x_axis, y=y_axis, markers=True)
+            import numpy as np
+            if len(grouped) >= 2:
+                x_numeric = np.arange(len(grouped))
+                y_values = grouped[y_axis].values
+                z = np.polyfit(x_numeric, y_values, 1)
+                p = np.poly1d(z)
+                trend_y = p(x_numeric)
+                fig.add_scatter(
+                    x=grouped[x_axis],
+                    y=trend_y,
+                    mode="lines",
+                    name="Trend",
+                    line=dict(color="#F0A500", dash="dot", width=2)
+                )
         elif chart_type == "Pie":
             fig = px.pie(grouped, names=x_axis, values=y_axis)
         elif chart_type == "Scatter":
@@ -243,31 +283,30 @@ if uploaded_file:
             fig2 = px.histogram(filtered_df, x=hist_col, nbins=20, color_discrete_sequence=["#1D9E75"])
             st.plotly_chart(fig2, use_container_width=True)
 
-    # --- Pivot Table ---
+  # --- Pivot Table ---
     st.subheader("Pivot Table")
     pivot_col1, pivot_col2, pivot_col3 = st.columns(3)
-
     with pivot_col1:
         pivot_rows = st.selectbox("Rows", cat_cols, key="pivot_rows")
     with pivot_col2:
-        pivot_cols = st.selectbox("Columns", cat_cols, key="pivot_cols")
+        pivot_cols_sel = st.selectbox("Columns", cat_cols, key="pivot_cols")
     with pivot_col3:
         pivot_vals = st.selectbox("Values", num_cols, key="pivot_vals")
-
-    if pivot_rows and pivot_cols and pivot_vals:
-        pivot_table = filtered_df.pivot_table(
+    if pivot_rows == pivot_cols_sel:
+        st.warning("Rows and Columns cannot be the same. Please select different columns.")
+    else:
+        pt = filtered_df.pivot_table(
             index=pivot_rows,
-            columns=pivot_cols,
+            columns=pivot_cols_sel,
             values=pivot_vals,
             aggfunc="sum",
             fill_value=0,
             margins=True,
             margins_name="Total"
         )
-        pivot_table = pivot_table.round(0).astype(int)
-        st.dataframe(pivot_table, use_container_width=True)
-
-        csv_pivot = pivot_table.to_csv().encode("utf-8")
+        pt = pt.round(0).astype(int)
+        st.dataframe(pt, use_container_width=True)
+        csv_pivot = pt.to_csv().encode("utf-8")
         st.download_button(
             "⬇️ Download Pivot Table",
             csv_pivot,
