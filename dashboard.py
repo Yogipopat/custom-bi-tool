@@ -605,3 +605,81 @@ else:
         # --- Download CSV ---
         csv = filtered_df.to_csv(index=False).encode("utf-8")
         st.download_button("⬇️ Download Filtered CSV", csv, "filtered_data.csv", "text/csv")
+
+        # --- EMAIL REPORT ──────────────────────────────────────
+        st.divider()
+        st.subheader("📧 Email Report")
+
+        with st.expander("Email Settings"):
+            sender_email = st.text_input("Your Gmail address", key="sender")
+            app_password = st.text_input("App Password (16 characters)", type="password", key="app_pass")
+            receiver_email = st.text_input("Send report to", key="receiver")
+
+        if st.button("Send Report via Email"):
+            if not (sender_email and app_password and receiver_email):
+                st.warning("Please fill in all email fields first.")
+            else:
+                with st.spinner("Generating report and sending email..."):
+                    import smtplib
+                    from email.mime.multipart import MIMEMultipart
+                    from email.mime.text import MIMEText
+                    from email.mime.application import MIMEApplication
+                    from datetime import datetime
+
+                    # Generate the PDF (same as PDF export)
+                    img1 = io.BytesIO(fig.to_image(format="png", width=800, height=450, scale=2))
+                    img2 = io.BytesIO(fig2.to_image(format="png", width=800, height=450, scale=2))
+
+                    email_pdf = io.BytesIO()
+                    edoc = SimpleDocTemplate(email_pdf, pagesize=landscape(A4),
+                        leftMargin=1.5*cm, rightMargin=1.5*cm, topMargin=1.5*cm, bottomMargin=2*cm)
+                    estyles = getSampleStyleSheet()
+                    estory = []
+                    estory.append(Paragraph(f'<font size="16"><b>{company_name} — Dashboard Report</b></font>', estyles['Normal']))
+                    estory.append(Spacer(1, 0.3*cm))
+                    estory.append(Paragraph(f'Generated: {datetime.now().strftime("%d %B %Y, %I:%M %p")}', estyles['Normal']))
+                    estory.append(Spacer(1, 0.4*cm))
+
+                    em_data = [["Column", "Total", "Average"]]
+                    for c in num_cols[:4]:
+                        em_data.append([c, f"{filtered_df[c].sum():,.0f}", f"{filtered_df[c].mean():,.1f}"])
+                    em_tbl = Table(em_data, colWidths=[7*cm, 5*cm, 5*cm])
+                    em_tbl.setStyle(TableStyle([
+                        ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#185FA5")),
+                        ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+                        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+                        ('FONTSIZE', (0,0), (-1,-1), 10),
+                        ('ALIGN', (1,0), (-1,-1), 'CENTER'),
+                        ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
+                        ('TOPPADDING', (0,0), (-1,-1), 8),
+                        ('BOTTOMPADDING', (0,0), (-1,-1), 8),
+                    ]))
+                    estory.append(em_tbl)
+                    estory.append(Spacer(1, 0.4*cm))
+                    estory.append(Image(img1, width=13*cm, height=7*cm))
+                    edoc.build(estory)
+                    email_pdf.seek(0)
+
+                    # Compose the email
+                    msg = MIMEMultipart()
+                    msg["From"] = sender_email
+                    msg["To"] = receiver_email
+                    msg["Subject"] = f"Dashboard Report — {datetime.now().strftime('%d %b %Y')}"
+
+                    body_text = f"Hi,\n\nPlease find attached the dashboard report generated on {datetime.now().strftime('%d %B %Y')}.\n\nRegards,\n{company_name}"
+                    msg.attach(MIMEText(body_text, "plain"))
+
+                    attachment = MIMEApplication(email_pdf.read(), _subtype="pdf")
+                    attachment.add_header("Content-Disposition", "attachment", filename="dashboard_report.pdf")
+                    msg.attach(attachment)
+
+                    # Send via Gmail
+                    try:
+                        server = smtplib.SMTP("smtp.gmail.com", 587)
+                        server.starttls()
+                        server.login(sender_email, app_password)
+                        server.send_message(msg)
+                        server.quit()
+                        st.success(f"✅ Report sent successfully to {receiver_email}")
+                    except Exception as e:
+                        st.error(f"Failed to send email: {e}")
